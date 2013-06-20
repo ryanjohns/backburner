@@ -108,25 +108,32 @@ module Backburner
     #   @worker.work_one_job
     #
     def work_one_job
-      job = Backburner::Job.new(self.connection.tubes.reserve)
+      job = Backburner::Job.new(self.connection.tubes.reserve(self.connection.iron_mq? ? 55 : nil))
       self.log_job_begin(job.name, job.args)
       job.process(self.connection.iron_mq?)
       self.log_job_end(job.name)
     rescue Backburner::Job::JobFormatInvalid => e
       self.log_error self.exception_message(e)
     rescue => e # Error occurred processing job
-      self.log_error self.exception_message(e)
-      num_retries = job.stats.releases
-      retry_status = "failed: attempt #{num_retries+1} of #{config.max_job_retries+1}"
-      if num_retries < config.max_job_retries # retry again
-        delay = config.retry_delay + num_retries ** 3
-        job.release(:delay => delay)
-        self.log_job_end(job.name, "#{retry_status}, retrying in #{delay}s") if job_started_at
-      else # retries failed, bury
-        job.bury
-        self.log_job_end(job.name, "#{retry_status}, burying") if job_started_at
+      if self.connection.iron_mq?
+        unless e.is_a?(Beaneater::TimedOutError)
+          self.log_error self.exception_message(e)
+          handle_error(e, job.name, job.args)
+        end
+      else
+        self.log_error self.exception_message(e)
+        num_retries = job.stats.releases
+        retry_status = "failed: attempt #{num_retries+1} of #{config.max_job_retries+1}"
+        if num_retries < config.max_job_retries # retry again
+          delay = config.retry_delay + num_retries ** 3
+          job.release(:delay => delay)
+          self.log_job_end(job.name, "#{retry_status}, retrying in #{delay}s") if job_started_at
+        else # retries failed, bury
+          job.bury
+          self.log_job_end(job.name, "#{retry_status}, burying") if job_started_at
+        end
+        handle_error(e, job.name, job.args)
       end
-      handle_error(e, job.name, job.args)
     end
 
     protected
