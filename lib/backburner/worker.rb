@@ -61,6 +61,7 @@ module Backburner
     #   Worker.new(['test.job'])
     def initialize(tube_names=nil)
       @tube_names = self.process_tube_names(tube_names)
+      register_signal_handlers!
     end
 
     # Starts processing ready jobs indefinitely.
@@ -85,6 +86,12 @@ module Backburner
     #
     def prepare
       raise NotImplementedError
+    end
+
+    # Triggers this worker to shutdown
+    def shutdown
+      log_info 'Worker exiting...'
+      Kernel.exit!
     end
 
     # Processes tube_names given tube_names array.
@@ -142,7 +149,7 @@ module Backburner
     # Filtered for tubes that match the known prefix
     def all_existing_queues
       known_queues    = Backburner::Worker.known_queue_classes.map(&:queue)
-      existing_tubes  = self.connection.tubes.all.map(&:name).select { |tube| tube =~ /^#{config.tube_namespace}/ }
+      existing_tubes  = self.connection.tubes.all.map(&:name).select { |tube| tube =~ /^#{queue_config.tube_namespace}/ }
       known_queues + existing_tubes
     end
 
@@ -172,6 +179,12 @@ module Backburner
       tube_names = nil if tube_names && tube_names.compact.empty?
       tube_names ||= Backburner.default_queues.any? ? Backburner.default_queues : all_existing_queues
       Array(tube_names)
+    end
+
+    # Registers signal handlers TERM and INT to trigger
+    def register_signal_handlers!
+      trap('TERM') { shutdown  }
+      trap('INT')  { shutdown  }
     end
   end # Worker
 end # Backburner
